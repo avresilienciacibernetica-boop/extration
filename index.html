@@ -1,4 +1,6 @@
 
+
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -816,7 +818,7 @@ function parseCoupa(txt){
    let dias=d[1]||0;
    let horas=d[2]||0;
 
-   let itemMatches=[...p.matchAll(/(\d{6,})\s*\|\|\s*([^\n\r]+)/g)];
+   let itemMatches=[...p.matchAll(/(\d{6,})\s*\|{1,2}\s*([^\n\r]+)/g)];
    let itemSegments=[];
    for(let k=0;k<itemMatches.length;k++){
      let start=itemMatches[k].index;
@@ -842,6 +844,13 @@ function parseCoupa(txt){
          destino=raw.split(':')[0].trim();
        }
      }
+     if(!destino){
+       // Fallback: rotulo "Endereco de entrega" (nomenclatura atual do Coupa) - linha "CEP Cidade UF" seguida de "Brasil"
+       let enderecoEntregaM=(seg.match(/Endere[çc]o de entrega[\s\S]*?^(\d{5}-?\d{3})\s+([^\n\r]+?)\s+([A-Z]{2})\s*\r?\n\s*Brasil/im)||p.match(/Endere[çc]o de entrega[\s\S]*?^(\d{5}-?\d{3})\s+([^\n\r]+?)\s+([A-Z]{2})\s*\r?\n\s*Brasil/im));
+       if(enderecoEntregaM){
+         destino=(enderecoEntregaM[2]+' '+enderecoEntregaM[3]).trim();
+       }
+     }
 
      let ncmRaw=(seg.match(/NCM[\s\S]*?([\d]{4}\.[\d]{2}\.[\d]{2}|[\d]{8})/)||[])[1]||'';
      let ncm=ncmRaw.replace(/\./g,'');
@@ -863,6 +872,16 @@ function parseCoupa(txt){
        let descBlocoM=seg.match(/(?:Description|Descri[çc][ãa]o)\s*\n([\s\S]*?)(?=\n(?:Manufacturer Name|NCM|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]))/i);
        if(descBlocoM){
          descricao=descBlocoM[1].replace(/^(?:PT|EN|ES)\s*\|{1,2}\s*/i,'').trim();
+       }
+     }
+     if(!descricao){
+       // Camada 2.5: rotulo "Texto de compra do material" - texto direto do material sem prefixo de idioma (PT||)
+       let materialM=seg.match(/Texto de compra do material\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|$)/i);
+       if(materialM){
+         let materialTexto=materialM[1].trim();
+         let fabMatM=materialTexto.match(/FABRICANTE\/REFERENCIA\s*:\s*([^;\n\r]+)/i);
+         if(fabMatM){ fabricante=fabMatM[1].trim(); }
+         descricao=materialTexto.replace(/;\s*$/,'').trim();
        }
      }
      if(!descricao){
@@ -1473,11 +1492,18 @@ function parseTextoLinhaSourcing(txt){
      if(brIdx>=2){ destino=(partes[brIdx-2]+' '+partes[brIdx-1]).trim(); }
      else { destino=raw.split(':')[0].trim(); }
    }
+   if(!destino){
+     // Fallback: rotulo "Endereco de entrega" (nomenclatura atual do Coupa) - linha "CEP Cidade UF" seguida de "Brasil"
+     let enderecoEntregaM=p.match(/Endere[çc]o de entrega[\s\S]*?^(\d{5}-?\d{3})\s+([^\n\r]+?)\s+([A-Z]{2})\s*\r?\n\s*Brasil/im);
+     if(enderecoEntregaM){
+       destino=(enderecoEntregaM[2]+' '+enderecoEntregaM[3]).trim();
+     }
+   }
 
    let ncmRaw=(p.match(/NCM[\s\S]*?([\d]{4}\.[\d]{2}\.[\d]{2}|[\d]{8})/)||[])[1]||'';
    let ncm=ncmRaw.replace(/\./g,'');
 
-   let itemMatches=[...p.matchAll(/(\d{6,})\s*\|\|\s*([^\n\r]+)/g)];
+   let itemMatches=[...p.matchAll(/(\d{6,})\s*\|{1,2}\s*([^\n\r]+)/g)];
    let itemSegments=[];
    for(let k=0;k<itemMatches.length;k++){
      let start=itemMatches[k].index;
@@ -1502,6 +1528,13 @@ function parseTextoLinhaSourcing(txt){
        if(brIdx>=2){ destinoItem=(partes[brIdx-2]+' '+partes[brIdx-1]).trim(); }
        else { destinoItem=raw.split(':')[0].trim(); }
      }
+     if(!detailsSegM){
+       // Fallback: rotulo "Endereco de entrega" (nomenclatura atual do Coupa) - linha "CEP Cidade UF" seguida de "Brasil"
+       let enderecoEntregaSegM=seg.match(/Endere[çc]o de entrega[\s\S]*?^(\d{5}-?\d{3})\s+([^\n\r]+?)\s+([A-Z]{2})\s*\r?\n\s*Brasil/im);
+       if(enderecoEntregaSegM){
+         destinoItem=(enderecoEntregaSegM[2]+' '+enderecoEntregaSegM[3]).trim();
+       }
+     }
 
      let ncmSegRaw=(seg.match(/NCM[\s\S]*?([\d]{4}\.[\d]{2}\.[\d]{2}|[\d]{8})/)||[])[1]||'';
      let ncmItem=ncmSegRaw?ncmSegRaw.replace(/\./g,''):ncm;
@@ -1521,6 +1554,16 @@ function parseTextoLinhaSourcing(txt){
        let descBlocoM=seg.match(/(?:Description|Descri[çc][ãa]o)\s*\n([\s\S]*?)(?=\n(?:Manufacturer Name|NCM|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]))/i);
        if(descBlocoM){
          descricao=descBlocoM[1].replace(/^(?:PT|EN|ES)\s*\|{1,2}\s*/i,'').trim();
+       }
+     }
+     if(!descricao){
+       // Camada 2.5: rotulo "Texto de compra do material" - texto direto do material sem prefixo de idioma (PT||)
+       let materialM=seg.match(/Texto de compra do material\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|$)/i);
+       if(materialM){
+         let materialTexto=materialM[1].trim();
+         let fabMatM=materialTexto.match(/FABRICANTE\/REFERENCIA\s*:\s*([^;\n\r]+)/i);
+         if(fabMatM){ fabricante=fabMatM[1].trim(); }
+         descricao=materialTexto.replace(/;\s*$/,'').trim();
        }
      }
      if(!descricao){
