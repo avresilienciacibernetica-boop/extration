@@ -452,6 +452,8 @@ let editandoMarcaIdx=-1;
 let editandoDestinoIdx=-1;
 let listaSourcing=[];
 let totalColagens=0;
+let sessaoAtual=0; // Carimbo incrementado a cada login/logout - usado para descartar respostas de rede
+                    // de um usuario anterior que cheguem atrasadas apos a troca de conta (race condition)
 
 function forcarSoberaniaLocal(){
   try {
@@ -467,7 +469,9 @@ function forcarSoberaniaLocal(){
 }
 
 async function carregarDados(){
+  const minhaSessao=sessaoAtual;
   const {data, error}=await _supa.from('crm_dados').select('*').eq('usuario_id',usuarioLogado.id).order('created_at',{ascending:true});
+  if(sessaoAtual!==minhaSessao) return; // usuario trocou de conta enquanto a resposta estava em transito - descarta resposta atrasada
   if(!error && data){
     dados=data;
   } else {
@@ -489,7 +493,9 @@ async function carregarCadastros(){
 }
 
 async function carregarSourcing(){
+  const minhaSessao=sessaoAtual;
   const {data}=await _supa.from('crm_sourcing').select('*').eq('usuario_id',usuarioLogado.id).order('created_at',{ascending:true});
+  if(sessaoAtual!==minhaSessao) return; // usuario trocou de conta enquanto a resposta estava em transito - descarta resposta atrasada
   if(data){
     listaSourcing=data.map(r=>({...r.payload,_id:r.id}));
     totalColagens=data.length>0?data[data.length-1].total_colagens||0:0;
@@ -529,6 +535,7 @@ async function realizarLogin(){
 }
 
 function entrarNoApp(){
+  sessaoAtual++; // invalida qualquer carregamento de uma sessao/usuario anterior que ainda esteja em transito
   document.getElementById('telaCarregando').style.display='none';
   document.getElementById('telaLogin').style.display='none';
   document.getElementById('appConteudo').style.display='block';
@@ -568,6 +575,7 @@ async function verificarSessaoExistente(){
 }
 
 function realizarLogout(){
+  sessaoAtual++; // invalida qualquer carregamento desta sessao que ainda esteja em transito
   usuarioLogado=null;
   sessionStorage.removeItem('usuarioLogadoId');
   // Limpa os dados da sessão encerrada imediatamente, para que não fiquem visíveis
@@ -875,8 +883,8 @@ function parseCoupa(txt){
        }
      }
      if(!descricao){
-       // Camada 2.5: rotulo "Texto de compra do material" - texto direto do material sem prefixo de idioma (PT||)
-       let materialM=seg.match(/Texto de compra do material\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|$)/i);
+       // Camada 2.5: rotulo "Texto de compra do material" (PT) ou "Material Purchase Text" (EN) - texto direto do material sem prefixo de idioma (PT||)
+       let materialM=seg.match(/(?:Texto de compra do material|Material Purchase Text)\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|Short Text Service|$)/i);
        if(materialM){
          let materialTexto=materialM[1].trim();
          let fabMatM=materialTexto.match(/FABRICANTE\/REFERENCIA\s*:\s*([^;\n\r]+)/i);
@@ -1557,8 +1565,8 @@ function parseTextoLinhaSourcing(txt){
        }
      }
      if(!descricao){
-       // Camada 2.5: rotulo "Texto de compra do material" - texto direto do material sem prefixo de idioma (PT||)
-       let materialM=seg.match(/Texto de compra do material\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|$)/i);
+       // Camada 2.5: rotulo "Texto de compra do material" (PT) ou "Material Purchase Text" (EN) - texto direto do material sem prefixo de idioma (PT||)
+       let materialM=seg.match(/(?:Texto de compra do material|Material Purchase Text)\s*:?\s*\n?([\s\S]*?)(?=\*{5,}|Manufacturer Name|Need By Date|Nome do Fabricante|Necess[áa]rio at[ée]|Short Text Service|$)/i);
        if(materialM){
          let materialTexto=materialM[1].trim();
          let fabMatM=materialTexto.match(/FABRICANTE\/REFERENCIA\s*:\s*([^;\n\r]+)/i);
