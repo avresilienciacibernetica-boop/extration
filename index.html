@@ -39,6 +39,8 @@ body{font-family:Segoe UI,Arial;margin:0;background:#f6f8fb;min-width:1620px}
 .badge-aberto{background:#d4f4dd;color:#1a7a3c;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
 .badge-pendente{background:#f1f1f1;color:#777;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
 tr.linha-aberta{background:#f6fffa}
+tr.linha-duplicada{background:#fff1f3}
+.badge-duplicado{background:#ffd9de;color:#b3273f;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
 nav{position:sticky;top:46px;background:#fff;border-bottom:1px solid #ddd;padding:10px;display:flex;gap:10px;align-items:center;z-index:1000;min-width:1600px;width:100%;box-sizing:border-box}
 .container{padding:12px;overflow-x:auto;min-width:1600px;width:100%;box-sizing:border-box}
 table{width:100%;border-collapse:collapse;background:#fff;font-size:13px}
@@ -182,6 +184,7 @@ button{cursor:pointer}
 <th>Data Início</th>
 <th>Data Fim</th>
 <th>Colar Cotação</th>
+<th>Já tratado</th>
 <th>Status</th>
 </tr>
 </thead>
@@ -323,6 +326,7 @@ button{cursor:pointer}
 </div>
 </div>
 </th>
+<th>Já tratado</th>
 </tr>
 </thead>
 <tbody id="tb"></tbody>
@@ -369,6 +373,7 @@ button{cursor:pointer}
 <div class="adminbox-head">
 <div class="admintabs">
 <button id="btnAdminTabUsuarios" onclick="mostrarAdminTab('usuarios')">Usuários</button>
+<button id="btnAdminTabVinculos" onclick="mostrarAdminTab('vinculos')">Vínculos</button>
 <button id="btnAdminTabFornecedores" onclick="mostrarAdminTab('fornecedores')">Fornecedores</button>
 <button id="btnAdminTabUpload" onclick="mostrarAdminTab('upload')">Upload</button>
 </div>
@@ -395,6 +400,23 @@ button{cursor:pointer}
 <tr><th>Nome</th><th>Sobrenome</th><th>E-mail</th><th>Senha</th><th>Cargo</th><th></th></tr>
 </thead>
 <tbody id="tbAdminUsuarios"></tbody>
+</table>
+</div>
+
+<div id="adminViewVinculos" class="admin-view">
+<b>Vínculos entre Vendedor e Orçamentista</b>
+<p style="font-size:12px;color:#666;margin:8px 0 12px 0">Um vendedor pode ter vários orçamentistas vinculados, e um orçamentista pode ter vários vendedores. Quando um evento é tratado por qualquer pessoa vinculada, aparece um aviso de duplicidade para a outra parte.</p>
+<div class="admin-form">
+<select id="adminVinculoVendedor"></select>
+<select id="adminVinculoOrcamentista"></select>
+<button onclick="adicionarVinculoAdmin()">Vincular</button>
+</div>
+<div id="adminVinculoStatus" class="admin-upload-status"></div>
+<table class="admintable">
+<thead>
+<tr><th>Vendedor</th><th>Orçamentista</th><th></th></tr>
+</thead>
+<tbody id="tbAdminVinculos"></tbody>
 </table>
 </div>
 
@@ -451,6 +473,7 @@ let editandoFornecedorIdx=-1;
 let editandoMarcaIdx=-1;
 let editandoDestinoIdx=-1;
 let listaSourcing=[];
+let duplicidadeMap={}; // evento -> nome de quem, vinculado a mim, ja tratou esse mesmo evento
 let totalColagens=0;
 let sessaoAtual=0; // Carimbo incrementado a cada login/logout - usado para descartar respostas de rede
                     // de um usuario anterior que cheguem atrasadas apos a troca de conta (race condition)
@@ -504,6 +527,35 @@ async function carregarSourcing(){
     totalColagens=0;
   }
   renderSourcing();
+  atualizarDuplicidadeSourcing();
+}
+
+async function atualizarDuplicidadeSourcing(){
+  if(!usuarioLogado || !usuarioLogado.id) return;
+  const eventos=[...new Set(listaSourcing.filter(r=>!r.processado && r.evento).map(r=>r.evento))];
+  if(eventos.length===0){ duplicidadeMap={}; renderSourcing(); return; }
+  const {data,error}=await _supa.rpc('verificar_eventos_duplicados',{p_eventos:eventos,p_usuario_id:usuarioLogado.id});
+  duplicidadeMap={};
+  if(!error && data){
+    data.forEach(row=>{ if(row.nome) duplicidadeMap[row.evento]=row.nome; });
+  }
+  renderSourcing();
+}
+
+async function aplicarDuplicidadeDados(){
+  // Marca no Step2 (crm_dados) o login de quem, vinculado a mim, ja tratou o mesmo evento.
+  // So verifica itens que ainda NAO tem essa marcacao (duplicidade_usuario), preservando o
+  // historico de itens ja marcados anteriormente mesmo que o vinculo ou o Step1 mudem depois.
+  if(!usuarioLogado || !usuarioLogado.id) return;
+  const pendentes=dados.filter(d=>!d.duplicidade_usuario && d.evento);
+  const eventos=[...new Set(pendentes.map(d=>d.evento))];
+  if(eventos.length===0) return;
+  const {data,error}=await _supa.rpc('verificar_eventos_duplicados',{p_eventos:eventos,p_usuario_id:usuarioLogado.id});
+  if(!error && data){
+    const mapa={};
+    data.forEach(row=>{ if(row.nome) mapa[row.evento]=row.nome; });
+    pendentes.forEach(d=>{ if(mapa[d.evento]) d.duplicidade_usuario=mapa[d.evento]; });
+  }
 }
 
 async function inicializar(){
@@ -513,6 +565,7 @@ async function inicializar(){
 
 let adminUsuarios=[];
 let adminFornecedores=[];
+let adminVinculos=[];
 let usuarioLogado=null;
 
 async function realizarLogin(){
@@ -554,6 +607,7 @@ function entrarNoApp(){
 function aplicarPermissoesCargo(){
   const ehAdmin = usuarioLogado && usuarioLogado.cargo==='Admin';
   document.getElementById('btnAdminTabUsuarios').style.display = ehAdmin ? '' : 'none';
+  document.getElementById('btnAdminTabVinculos').style.display = ehAdmin ? '' : 'none';
   document.getElementById('btnAdminTabUpload').style.display = ehAdmin ? '' : 'none';
 }
 
@@ -607,12 +661,15 @@ function fecharAdmin(){
 
 function mostrarAdminTab(aba){
   document.getElementById('adminViewUsuarios').classList.toggle('ativo',aba==='usuarios');
+  document.getElementById('adminViewVinculos').classList.toggle('ativo',aba==='vinculos');
   document.getElementById('adminViewFornecedores').classList.toggle('ativo',aba==='fornecedores');
   document.getElementById('adminViewUpload').classList.toggle('ativo',aba==='upload');
   document.getElementById('btnAdminTabUsuarios').classList.toggle('ativo',aba==='usuarios');
+  document.getElementById('btnAdminTabVinculos').classList.toggle('ativo',aba==='vinculos');
   document.getElementById('btnAdminTabFornecedores').classList.toggle('ativo',aba==='fornecedores');
   document.getElementById('btnAdminTabUpload').classList.toggle('ativo',aba==='upload');
   if(aba==='usuarios') carregarUsuariosAdmin();
+  if(aba==='vinculos') carregarVinculosAdmin();
   if(aba==='fornecedores') carregarFornecedoresAdmin();
 }
 
@@ -678,6 +735,69 @@ async function adicionarUsuarioAdmin(){
 async function excluirUsuarioAdmin(id){
   await _supa.from('crm_usuarios').delete().eq('id',id);
   carregarUsuariosAdmin();
+}
+
+async function carregarVinculosAdmin(){
+  // Garante que a lista de usuarios esteja carregada, pois os selects de vendedor/orcamentista dependem dela
+  if(adminUsuarios.length===0){
+    const {data}=await _supa.from('crm_usuarios').select('*').order('nome',{ascending:true});
+    adminUsuarios = data||[];
+  }
+  popularSelectsVinculoAdmin();
+  const {data, error}=await _supa.from('crm_vinculos').select('*');
+  adminVinculos = error ? [] : (data||[]);
+  renderVinculosAdmin();
+}
+
+function popularSelectsVinculoAdmin(){
+  const selVendedor=document.getElementById('adminVinculoVendedor');
+  const selOrcamentista=document.getElementById('adminVinculoOrcamentista');
+  selVendedor.innerHTML='';
+  selOrcamentista.innerHTML='';
+  adminUsuarios.filter(u=>u.cargo==='Vendedor').forEach(u=>{
+    const opt=document.createElement('option');
+    opt.value=u.id; opt.textContent=u.nome+(u.sobrenome?' '+u.sobrenome:'');
+    selVendedor.appendChild(opt);
+  });
+  adminUsuarios.filter(u=>u.cargo==='Orçamentista').forEach(u=>{
+    const opt=document.createElement('option');
+    opt.value=u.id; opt.textContent=u.nome+(u.sobrenome?' '+u.sobrenome:'');
+    selOrcamentista.appendChild(opt);
+  });
+}
+
+function renderVinculosAdmin(){
+  const tb=document.getElementById('tbAdminVinculos');
+  tb.innerHTML='';
+  adminVinculos.forEach(v=>{
+    const vendedor=adminUsuarios.find(u=>u.id===v.vendedor_id);
+    const orcamentista=adminUsuarios.find(u=>u.id===v.orcamentista_id);
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td>'+(vendedor?vendedor.nome:'(usuário removido)')+'</td><td>'+(orcamentista?orcamentista.nome:'(usuário removido)')+'</td><td><button class="btnExcluirLinha" onclick="excluirVinculoAdmin(\''+v.id+'\')">Excluir</button></td>';
+    tb.appendChild(tr);
+  });
+}
+
+async function adicionarVinculoAdmin(){
+  const vendedor_id=document.getElementById('adminVinculoVendedor').value;
+  const orcamentista_id=document.getElementById('adminVinculoOrcamentista').value;
+  const status=document.getElementById('adminVinculoStatus');
+  if(!vendedor_id||!orcamentista_id){
+    status.textContent='Cadastre ao menos um Vendedor e um Orçamentista antes de vincular.';
+    return;
+  }
+  const {error}=await _supa.from('crm_vinculos').insert({vendedor_id,orcamentista_id});
+  if(error){
+    status.textContent = error.code==='23505' ? 'Esse vínculo já existe.' : ('Erro ao salvar: '+error.message);
+    return;
+  }
+  status.textContent='Vínculo adicionado.';
+  carregarVinculosAdmin();
+}
+
+async function excluirVinculoAdmin(id){
+  await _supa.from('crm_vinculos').delete().eq('id',id);
+  carregarVinculosAdmin();
 }
 
 async function carregarFornecedoresAdmin(){
@@ -815,7 +935,7 @@ document.getElementById('file').addEventListener('change',e=>{
  r.readAsText(f,'utf-8');
 });
 
-function parseCoupa(txt){
+async function parseCoupa(txt){
  dados=[];
  let parts=txt.split(/Spot Bid from Req #/).filter(x=>x.trim());
  parts.forEach(p=>{
@@ -923,6 +1043,7 @@ function parseCoupa(txt){
      });
    });
  });
+ await aplicarDuplicidadeDados();
  salvar();
  alert(dados.length+' item(ns) importado(s).');
 }
@@ -1099,7 +1220,7 @@ function render(){
  let h='';
  view.forEach((o,pos)=>{
  let r=o.r,i=o.idx;
- h+=`<tr>
+ h+=`<tr class="${r.duplicidade_usuario?'linha-duplicada':''}">
  <td><input type="checkbox" class="rowchk" ${r.selecionado?'checked':''} onchange="toggleRow(${i},this.checked)"></td>
  <td>${pos+1}</td>
  <td>${r.evento}</td>
@@ -1113,6 +1234,7 @@ function render(){
  <td>${r.end}</td>
  <td><input list="destinos" value="${r.destino||''}" style="text-transform:uppercase" onchange="ed(${i},'destino',removerAcentos(this.value))"></td>
  <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.prioridade}</td>
+ <td>${r.duplicidade_usuario?('<span class="badge-duplicado">'+r.duplicidade_usuario+'</span>'):''}</td>
  </tr>`;
  });
  document.getElementById('tb').innerHTML=h;
@@ -1391,6 +1513,7 @@ async function processarColagemSourcing(texto,html){
    }
  }
  renderSourcing();
+ atualizarDuplicidadeSourcing();
  let status=document.getElementById('statusSourcing');
  if(status){
    status.textContent=adicionados+' registro(s) adicionado(s)'+(duplicados>0?(' — '+duplicados+' já existente(s) ignorado(s)'):'')+'. Total na lista: '+listaSourcing.length+'. Páginas coladas: '+totalColagens+'.';
@@ -1411,7 +1534,8 @@ function renderSourcing(){
  let h='';
  listaSourcing.forEach((r,i)=>{
    if(r.processado) return;
-   h+=`<tr class="${r.aberto?'linha-aberta':''}">
+   let jaTratadoPor=duplicidadeMap[r.evento]||'';
+   h+=`<tr class="${r.aberto?'linha-aberta':''} ${jaTratadoPor?'linha-duplicada':''}">
    <td><input type="checkbox" class="chkSourcing" ${r.selecionado?'checked':''} onchange="toggleRowSourcing(${i},this.checked)"></td>
    <td>${r.url?('<a href="'+r.url+'" target="_blank">'+r.evento+'</a>'):r.evento}</td>
    <td>${r.empresa||''}</td>
@@ -1421,6 +1545,7 @@ function renderSourcing(){
    <td>${r.dataInicio||''}</td>
    <td>${r.dataFim||''}</td>
    <td><div class="sourcing-colar-linha" contenteditable="true" data-placeholder="Colar cotação..." onpaste="processarPasteLinhaSourcing(event,${i})"></div></td>
+   <td>${jaTratadoPor?('<span class="badge-duplicado">'+jaTratadoPor+'</span>'):''}</td>
    <td>${r.aberto?'<span class="badge-aberto">Aberto</span>':'<span class="badge-pendente">Pendente</span>'}</td>
    </tr>`;
  });
@@ -1643,7 +1768,9 @@ function processarPasteLinhaSourcing(e,i){
  let precisaConfirmar=!codigoTexto||codigoTexto!==r.evento;
  let executar=function(){
    let n=parseTextoLinhaSourcing(texto);
-   salvar();
+   aplicarDuplicidadeDados().then(function(){
+     salvar();
+   });
    r.textoColado=texto;
    r.processado=true;
    r.aberto=true;
@@ -1671,6 +1798,7 @@ async function processarInformacoesSourcing(){
    r.processado=true;
    r.aberto=true;
  }
+ await aplicarDuplicidadeDados();
  salvar();
  salvarSourcing();
  let status=document.getElementById('statusSourcing');
